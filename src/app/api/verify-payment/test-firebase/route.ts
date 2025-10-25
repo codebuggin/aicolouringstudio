@@ -1,7 +1,6 @@
 // app/api/verify-payment/test-firebase/route.ts
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/firebaseAdmin';
-import * as admin from 'firebase-admin';
+import { getDb, getFirebaseAdmin } from '@/lib/firebaseAdmin';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -10,15 +9,16 @@ export async function GET() {
   try {
     console.log('🧪 Test Firebase endpoint called');
 
-    // This will use the already-initialized admin
+    // Get the initialized admin instance
+    const admin = getFirebaseAdmin();
     const db = getDb();
     const testRef = db.collection('_healthcheck').doc('test');
-    
+
     await testRef.set({
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
       test: 'Firebase Admin is working!',
     });
-    
+
     const testDoc = await testRef.get();
 
     return NextResponse.json({
