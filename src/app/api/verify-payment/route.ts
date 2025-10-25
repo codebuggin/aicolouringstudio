@@ -1,14 +1,11 @@
 // app/api/verify-payment/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
-import * as admin from 'firebase-admin';
+import { getDb, getFirebaseAdmin } from '@/lib/firebaseAdmin';
 
-// Initialize Firebase Admin if not already initialized
-if (admin.apps.length === 0) {
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
-  });
-}
+// Force dynamic rendering for this API route to ensure fresh execution
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {
@@ -58,7 +55,8 @@ export async function POST(request: NextRequest) {
     console.log('✅ Payment signature verified');
 
     // Payment verified ✅ — Update Firestore
-    const db = admin.firestore();
+    const admin = getFirebaseAdmin();
+    const db = getDb();
     const userRef = db.collection('users').doc(userId);
 
     await userRef.update({

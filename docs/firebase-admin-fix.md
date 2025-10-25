@@ -1,114 +1,185 @@
-# Firebase Admin SDK Initialization Fix
+# Firebase Admin SDK Initialization Fix - Production Issue Resolution
 
 ## Problem Summary
 
-The `/api/verify-payment/test-firebase` route was failing with the error:
+The `/api/verify-payment` route was failing in production (Cloud Run) with the error:
 ```
 The default Firebase app does not exist. Make sure you call initializeApp() before using any of the Firebase services.
 ```
 
-Meanwhile, the `/api/verify-payment` route worked perfectly, despite both using the same `firebaseAdmin.ts` helper module.
+**Critical Symptoms:**
+- Direct curl tests to the API worked fine
+- Real Razorpay payment webhook callbacks failed with 500 errors
+- Firebase Admin initialization logs appeared during build
+- Error occurred in compiled Next.js bundle: `.next/server/app/api/verify-payment/route.js`
 
 ## Root Cause
 
-The issue was caused by **importing `firebase-admin` directly** instead of using the initialized instance from the helper module.
+The issue was caused by **inconsistent initialization patterns** across the codebase:
+
+1. **verify-payment route had its own inline initialization** instead of using the centralized module
+2. **Module code-splitting in Next.js** created separate execution contexts for different API routes
+3. **Race conditions in serverless cold starts** meant initialization didn't complete before handler execution
+4. **Different module bundling** for curl tests vs webhook calls caused inconsistent behavior
 
 ### What Was Wrong
 
-**Failing Route** (test-firebase/route.ts):
+**Broken verify-payment Route:**
 ```typescript
-import { getDb } from '@/lib/firebaseAdmin';
-import * as admin from 'firebase-admin';  // ❌ WRONG - Fresh uninitialized instance
+// src/app/api/verify-payment/route.ts
+import * as admin from 'firebase-admin';  // ❌ WRONG - Direct import
+
+// ❌ WRONG - Inline initialization creates race conditions
+if (admin.apps.length === 0) {
+  admin.initializeApp({
+    credential: admin.credential.applicationDefault(),
+  });
+}
+
+export async function POST(request: NextRequest) {
+  const db = admin.firestore(); // ❌ May execute before initialization completes
+  // ...
+}
+```
+
+**Working test-firebase Route:**
+```typescript
+// src/app/api/verify-payment/test-firebase/route.ts
+import { getDb, getFirebaseAdmin } from '@/lib/firebaseAdmin';  // ✅ CORRECT
 
 export async function GET() {
-  const db = getDb();
-  await testRef.set({
-    timestamp: admin.firestore.FieldValue.serverTimestamp(), // ❌ Uses wrong admin
-  });
+  const admin = getFirebaseAdmin(); // ✅ Uses module-level initialization
+  const db = getDb();               // ✅ Guaranteed to be initialized
+  // ...
 }
 ```
 
-**Working Route** (verify-payment/route.ts):
-```typescript
-import { getDb, getFirebaseAdmin } from '@/lib/firebaseAdmin';
+### Why This Happens in Serverless
 
-export async function POST() {
-  const admin = getFirebaseAdmin(); // ✅ CORRECT - Uses initialized instance
-  const db = getDb();
-  await userRef.update({
-    upgradedAt: admin.firestore.FieldValue.serverTimestamp(), // ✅ Works
-  });
-}
-```
+In Cloud Run's serverless environment with Next.js:
 
-### Why This Happens
+1. **Module Code-Splitting**: Each API route is bundled separately by Next.js
+2. **Execution Order**: Inline initialization code can execute AFTER handler code in cold starts
+3. **Module Isolation**: Direct `firebase-admin` imports don't share initialization state
+4. **Bundling Variations**: Webpack/Turbopack may optimize code differently for different execution paths
 
-In Node.js, each `import` of a module gets the same instance (modules are cached). However, when you import `firebase-admin` directly, you get a reference to the module object itself. The initialization code in `firebaseAdmin.ts` runs on the `admin` instance within that module, but that doesn't affect other imports of `firebase-admin` elsewhere.
-
-Think of it like this:
-- `firebaseAdmin.ts` imports admin and calls `admin.initializeApp()`
-- That initialization only affects the `admin` reference inside `firebaseAdmin.ts`
-- When you import `firebase-admin` directly in another file, you get the same module, but you're bypassing the initialization wrapper
+**Why curl works but webhooks fail:**
+- Curl tests → Hit warm container instances with completed initialization
+- Razorpay webhooks → Hit cold starts with different module loading timing
+- Different request headers/patterns → Trigger different Next.js code paths
 
 ## The Fix
 
-### 1. Updated test-firebase Route
+### 1. Refactored verify-payment Route
 
-**Before:**
+**Before (BROKEN):**
 ```typescript
-import { getDb } from '@/lib/firebaseAdmin';
 import * as admin from 'firebase-admin';
-```
 
-**After:**
-```typescript
-import { getDb, getFirebaseAdmin } from '@/lib/firebaseAdmin';
+if (admin.apps.length === 0) {
+  admin.initializeApp({
+    credential: admin.credential.applicationDefault(),
+  });
+}
 
-export async function GET() {
-  const admin = getFirebaseAdmin(); // Get the initialized instance
-  const db = getDb();
-  // Now admin.firestore.FieldValue works correctly
+export async function POST(request: NextRequest) {
+  const db = admin.firestore();
+  // ...
 }
 ```
 
-### 2. Enhanced firebaseAdmin.ts
+**After (FIXED):**
+```typescript
+import { getDb, getFirebaseAdmin } from '@/lib/firebaseAdmin';
 
-Added safety checks and better documentation:
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
+export async function POST(request: NextRequest) {
+  // Get instances from centralized initialization
+  const admin = getFirebaseAdmin();
+  const db = getDb();
+  // ...
+}
+```
+
+### 2. Enhanced firebaseAdmin.ts with Production Debugging
+
+Added comprehensive logging and error handling:
 
 ```typescript
-/**
- * Returns the initialized Firebase Admin instance
- * IMPORTANT: Always use this instead of importing 'firebase-admin' directly
- */
+// Module-level initialization (executes once when module loads)
+let initAttempted = false;
+let initSuccess = false;
+
+if (admin.apps.length === 0) {
+  initAttempted = true;
+  console.log('🔥 [FirebaseAdmin] Initializing Firebase Admin SDK...');
+  console.log(`🔍 [FirebaseAdmin] Environment: ${process.env.NODE_ENV}`);
+
+  try {
+    admin.initializeApp({
+      credential: admin.credential.applicationDefault(),
+    });
+    initSuccess = true;
+    console.log('✅ [FirebaseAdmin] Firebase Admin initialized successfully');
+    console.log(`📊 [FirebaseAdmin] Active apps: ${admin.apps.length}`);
+  } catch (error: any) {
+    console.error('❌ [FirebaseAdmin] Initialization FAILED');
+    throw error;
+  }
+}
+
 export function getFirebaseAdmin() {
   if (admin.apps.length === 0) {
-    throw new Error('Firebase Admin not initialized. This should not happen.');
+    console.error('❌ [getFirebaseAdmin] No apps found!');
+    console.error(`Init attempted: ${initAttempted}, success: ${initSuccess}`);
+    throw new Error('CRITICAL: Firebase Admin not initialized');
   }
   return admin;
 }
 ```
 
-## Best Practices for Firebase Admin in Next.js
+### 3. Key Changes
+
+1. **Removed inline initialization** from verify-payment route
+2. **Added centralized imports** from `@/lib/firebaseAdmin`
+3. **Added `export const dynamic = 'force-dynamic'`** to prevent static optimization
+4. **Added `export const runtime = 'nodejs'`** to ensure Node.js runtime
+5. **Enhanced logging** to debug production issues
+
+## Best Practices for Firebase Admin in Next.js + Cloud Run
 
 ### ✅ DO
 
-1. **Always use helper functions:**
+1. **Always use centralized initialization:**
    ```typescript
+   // In all API routes and server actions
    import { getFirebaseAdmin, getDb, getAuth } from '@/lib/firebaseAdmin';
+
    const admin = getFirebaseAdmin();
    const db = getDb();
    ```
 
-2. **Initialize at module level:**
+2. **Use module-level initialization only once:**
    ```typescript
-   // In firebaseAdmin.ts
+   // ONLY in src/lib/firebaseAdmin.ts
    if (admin.apps.length === 0) {
-     admin.initializeApp({ ... });
+     admin.initializeApp({
+       credential: admin.credential.applicationDefault(),
+     });
    }
    ```
 
-3. **Use Application Default Credentials in Cloud Run:**
+3. **Force dynamic rendering for API routes:**
    ```typescript
+   export const dynamic = 'force-dynamic';
+   export const runtime = 'nodejs';
+   ```
+
+4. **Use Application Default Credentials:**
+   ```typescript
+   // Works automatically in Cloud Run/Firebase Hosting
    admin.initializeApp({
      credential: admin.credential.applicationDefault(),
    });
@@ -116,83 +187,153 @@ export function getFirebaseAdmin() {
 
 ### ❌ DON'T
 
-1. **Don't import firebase-admin directly in route handlers:**
+1. **Don't import firebase-admin directly in routes:**
    ```typescript
    import * as admin from 'firebase-admin'; // ❌ WRONG
    ```
 
-2. **Don't initialize in each route:**
+2. **Don't initialize inline in route handlers:**
    ```typescript
-   // ❌ WRONG - Causes "app already exists" errors
-   export async function POST() {
+   // ❌ WRONG - Creates race conditions
+   if (admin.apps.length === 0) {
      admin.initializeApp({ ... });
    }
    ```
 
-3. **Don't skip the helper functions:**
+3. **Don't mix initialization patterns:**
    ```typescript
-   import { getDb } from '@/lib/firebaseAdmin';
-   import * as admin from 'firebase-admin';
-
-   // ❌ WRONG - Mixing imports
-   const db = getDb();
-   admin.firestore.FieldValue.serverTimestamp();
+   // ❌ WRONG - Inconsistent across routes
+   // verify-payment: inline init
+   // test-firebase: centralized init
    ```
 
-## Why This Works in Cloud Run
+4. **Don't assume initialization timing:**
+   ```typescript
+   // ❌ WRONG - May execute before init completes
+   import * as admin from 'firebase-admin';
+   const db = admin.firestore(); // Immediate usage
+   ```
 
-Cloud Run is a serverless environment where:
-- Container instances are reused across requests
-- Module-level code runs once when the container starts
-- The `firebaseAdmin.ts` module initialization runs once per container
-- Application Default Credentials automatically work in Firebase Hosting + Cloud Run
+## Why This Pattern Works in Cloud Run
 
-This makes module-level initialization the perfect pattern for Firebase Admin in serverless environments.
+Cloud Run serverless containers:
+- Execute module-level code once during container initialization
+- Reuse container instances across multiple requests
+- Cache module state between requests
+- Provide Application Default Credentials automatically
+
+Module-level initialization in `firebaseAdmin.ts`:
+- Runs once when container starts
+- Completes before any request handlers execute
+- Shared across all imports of the module
+- Survives between requests (warm starts)
 
 ## Testing the Fix
 
-### Test the working routes:
+### Local Testing
 
 ```bash
-# Test Firebase initialization
-curl https://studio-8922232553-e9354.web.app/api/verify-payment/test-firebase
+npm run build
+npm start
 
-# Expected response:
-{
-  "success": true,
-  "message": "Firebase Admin initialized successfully! 🎉",
-  "details": {
-    "appsCount": 1,
-    "appName": "[DEFAULT]",
-    "firestoreWorking": true,
-    "testDocExists": true
-  }
-}
+# Test with curl
+curl -X POST http://localhost:3000/api/verify-payment \
+  -H "Content-Type: application/json" \
+  -d '{"razorpay_order_id":"test","razorpay_payment_id":"test","razorpay_signature":"fake","userId":"test"}'
+```
 
-# Test payment verification (with mock data)
+### Production Testing (Cloud Run)
+
+```bash
+# Deploy to Firebase
+firebase deploy --only hosting
+
+# Test with curl (should work)
 curl -X POST https://studio-8922232553-e9354.web.app/api/verify-payment \
   -H "Content-Type: application/json" \
   -d '{"razorpay_order_id":"order_test","razorpay_payment_id":"pay_test","razorpay_signature":"fake","userId":"test"}'
 
-# Expected response:
-{
-  "success": false,
-  "message": "Invalid payment signature"
-}
-# (This is expected - we're using fake credentials)
+# Expected: {"success":false,"message":"Invalid payment signature"}
+# This proves Firebase Admin IS working
+
+# Test with real Razorpay payment
+# 1. Go to /subscribe
+# 2. Complete payment with test credentials
+# 3. Verify webhook succeeds (no more 500 errors)
+```
+
+### Monitoring in Cloud Run Logs
+
+Look for these log messages:
+
+**Successful initialization:**
+```
+🔥 [FirebaseAdmin] Initializing Firebase Admin SDK...
+🔍 [FirebaseAdmin] Environment: production
+✅ [FirebaseAdmin] Firebase Admin initialized successfully
+📊 [FirebaseAdmin] Active apps: 1
+✓ [getFirebaseAdmin] Returning Firebase Admin instance
+✓ [getDb] Returning Firestore instance
+```
+
+**If initialization fails (shouldn't happen now):**
+```
+❌ [FirebaseAdmin] Initialization FAILED
+❌ [getFirebaseAdmin] No apps found!
+Init attempted: true, success: false
+```
+
+## Deployment Steps
+
+```bash
+# 1. Build the project
+npm run build
+
+# 2. Test locally
+npm start
+# Test at http://localhost:3000/api/verify-payment
+
+# 3. Deploy to Firebase
+firebase deploy --only hosting
+
+# 4. Monitor Cloud Run logs
+# Firebase Console → Hosting → Backend logs
+# Or: gcloud logs tail
+
+# 5. Test real payment flow
+# Go to /subscribe and complete a test payment
 ```
 
 ## Summary
 
-**Problem:** Direct imports of `firebase-admin` bypass the initialization in `firebaseAdmin.ts`
+**Problem:** Inline Firebase Admin initialization in verify-payment route caused race conditions in serverless cold starts
 
-**Solution:** Always use `getFirebaseAdmin()` to get the initialized instance
+**Root Cause:** Module code-splitting and execution order variations in Next.js bundled code for Cloud Run
 
-**Impact:** Consistent, reliable Firebase Admin SDK usage across all API routes in Cloud Run
+**Solution:**
+1. Centralized initialization in `lib/firebaseAdmin.ts`
+2. Use helper functions (`getDb`, `getFirebaseAdmin`) in all routes
+3. Remove inline initialization code
+4. Force dynamic rendering with Next.js route config
+
+**Impact:** Reliable Firebase Admin SDK initialization for both curl tests AND real Razorpay webhook callbacks
 
 ## Related Files
 
-- `src/lib/firebaseAdmin.ts` - Central initialization module
-- `src/app/api/verify-payment/route.ts` - Payment verification (uses Admin SDK)
-- `src/app/api/verify-payment/test-firebase/route.ts` - Health check endpoint
-- `src/app/actions.ts` - Server actions (uses Admin SDK)
+- ✅ `src/lib/firebaseAdmin.ts` - Centralized initialization (ENHANCED)
+- ✅ `src/app/api/verify-payment/route.ts` - Payment verification (FIXED)
+- ✅ `src/app/api/verify-payment/test-firebase/route.ts` - Health check (WORKING)
+- `src/app/subscribe/actions.ts` - Server actions (no Firebase Admin needed)
+- `src/app/subscribe/page.tsx` - Frontend payment UI (client-side Firebase only)
+
+## Verification Checklist
+
+- [ ] No direct `import * as admin from 'firebase-admin'` in route files
+- [ ] All routes use `import { getDb, getFirebaseAdmin } from '@/lib/firebaseAdmin'`
+- [ ] Module-level initialization only in `firebaseAdmin.ts`
+- [ ] API routes have `export const dynamic = 'force-dynamic'`
+- [ ] Build succeeds without warnings
+- [ ] Curl tests pass in production
+- [ ] Real Razorpay payment webhooks succeed
+- [ ] Cloud Run logs show successful initialization
+- [ ] No "default Firebase app does not exist" errors
