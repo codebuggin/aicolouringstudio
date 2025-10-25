@@ -3,8 +3,6 @@
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import { z } from 'zod';
-import { doc, updateDoc } from 'firebase/firestore';
-import { initializeFirebase } from '@/firebase';
 
 const createOrderSchema = z.object({
   userId: z.string(),
