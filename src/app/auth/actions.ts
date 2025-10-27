@@ -1,16 +1,7 @@
 'use server';
 
-import {
-  getAuth,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  GoogleAuthProvider,
-  signInWithPopup,
-} from 'firebase/auth';
-import { initializeFirebase } from '@/firebase';
 import { z } from 'zod';
 import { redirect } from 'next/navigation';
-import { FirebaseError } from 'firebase/app';
 
 const emailSchema = z.string().email({ message: 'Please enter a valid email address.' });
 const passwordSchema = z.string().min(6, { message: 'Password must be at least 6 characters long.' });

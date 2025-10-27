@@ -1,17 +1,22 @@
 // app/api/verify-payment/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
-import * as admin from 'firebase-admin';
+import { getDb, getFirebaseAdmin } from '@/lib/firebaseAdmin';
 
-// Initialize Firebase Admin if not already initialized
-if (admin.apps.length === 0) {
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
-  });
-}
+// Force dynamic rendering and Node.js runtime for Firebase Admin
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('🚀 Payment verification endpoint called');
+
+    // Get initialized Firebase instances using centralized helper
+    const admin = getFirebaseAdmin();
+    const db = getDb();
+
+    console.log(`📊 Firebase Admin apps: ${admin.apps.length}`);
+
     const body = await request.json();
     const {
       razorpay_order_id,
@@ -58,14 +63,15 @@ export async function POST(request: NextRequest) {
     console.log('✅ Payment signature verified');
 
     // Payment verified ✅ — Update Firestore
-    const db = admin.firestore();
+    const FieldValue = admin.firestore.FieldValue;
+    console.log('✅ Got Firestore instance, updating user...');
     const userRef = db.collection('users').doc(userId);
 
     await userRef.update({
       isSubscribed: true,
       razorpayOrderId: razorpay_order_id,
       razorpayPaymentId: razorpay_payment_id,
-      upgradedAt: admin.firestore.FieldValue.serverTimestamp(),
+      upgradedAt: FieldValue.serverTimestamp(),
     });
 
     console.log(`✅ User ${userId} upgraded to Pro`);
@@ -78,10 +84,31 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error('❌ Payment verification error:', error);
     console.error('Error stack:', error.stack);
+    console.error('Error name:', error.name);
+
+    // Provide detailed error info for Firebase-related failures
+    const isFirebaseError = error.message?.includes('Firebase') ||
+                           error.message?.includes('default') ||
+                           error.message?.includes('app does not exist');
+
+    if (isFirebaseError) {
+      console.error('🔥 Firebase initialization state:');
+      console.error('  - GOOGLE_APPLICATION_CREDENTIALS:', process.env.GOOGLE_APPLICATION_CREDENTIALS ? 'Set' : 'Not set');
+      console.error('  - FIREBASE_CONFIG:', process.env.FIREBASE_CONFIG ? 'Set' : 'Not set');
+      console.error('  - NODE_ENV:', process.env.NODE_ENV);
+    }
+
     return NextResponse.json(
-      { 
-        success: false, 
+      {
+        success: false,
         message: error.message || 'Payment verification failed',
+        ...(process.env.NODE_ENV === 'development' && {
+          debug: {
+            errorName: error.name,
+            stack: error.stack,
+            isFirebaseError,
+          }
+        })
       },
       { status: 500 }
     );
