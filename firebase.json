@@ -1,0 +1,19 @@
+{
+  "hosting": {
+    "site": "studio-8922232553-e9354",
+    "source": ".",
+    "frameworksBackend": {
+      "region": "us-central1"
+    },
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "function": "ssrstudio8922232553e935"
+      },
+      {
+        "source": "**",
+        "function": "ssrstudio8922232553e935"
+      }
+    ]
+  }
+}

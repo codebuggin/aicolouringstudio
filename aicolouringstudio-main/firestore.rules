@@ -1,0 +1,67 @@
+/**
+ * @fileOverview
+ * This ruleset enforces a strict user-ownership model for data access.
+ *
+ * Data Structure:
+ * - User profiles are stored under `/users/{userId}`, where `{userId}` matches the Firebase Auth UID.
+ * - Generated images are stored in a subcollection `/users/{userId}/generatedImages/{imageId}`.
+ *
+ * Key Security Decisions:
+ * - Users can only access their own user profile and generated images.
+ * - Listing of generated images is restricted to the owning user.
+ * - The `userId` is part of the document path for generated images to enforce clear ownership.
+ * - Data validation is relaxed to allow rapid prototyping but enforces key relationships like user ownership.
+ */
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /**
+     * @description Controls access to user profile documents.
+     * @path /users/{userId}
+     * @allow (create) User with UID 'user123' can create their profile.
+     * @allow (get, update, delete) User with UID 'user123' can read, update, and delete their own profile.
+     * @deny (create, update, delete) User with UID 'user456' cannot modify user 'user123' profile.
+     * @principle Enforces document ownership for writes.
+     */
+    match /users/{userId} {
+      function isOwner(userId) {
+        return request.auth != null && request.auth.uid == userId;
+      }
+
+      function isSignedIn() {
+        return request.auth != null;
+      }
+
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if isOwner(userId);
+      allow delete: if isOwner(userId);
+    }
+
+    /**
+     * @description Controls access to generated image documents.
+     * @path /users/{userId}/generatedImages/{imageId}
+     * @allow (create) User with UID 'user123' can create an image in their own 'generatedImages' subcollection.
+     * @allow (get, list, update, delete) User with UID 'user123' can read, list, update, and delete images in their own 'generatedImages' subcollection.
+     * @deny (create, update, delete) User with UID 'user456' cannot modify user 'user123' generated images.
+     * @principle Enforces document ownership for writes and restricts listing to the owning user.
+     */
+    match /users/{userId}/generatedImages/{imageId} {
+      function isOwner(userId) {
+        return request.auth != null && request.auth.uid == userId;
+      }
+
+      function isSignedIn() {
+        return request.auth != null;
+      }
+
+      allow get: if isOwner(userId);
+      allow list: if isOwner(userId);
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if isOwner(userId);
+      allow delete: if isOwner(userId);
+    }
+  }
+}

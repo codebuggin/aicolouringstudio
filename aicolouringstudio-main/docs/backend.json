@@ -1,0 +1,130 @@
+{
+  "entities": {
+    "User": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "User",
+      "type": "object",
+      "description": "Represents a user of the AI Coloring Studio application.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the user. (Primary Key)"
+        },
+        "username": {
+          "type": "string",
+          "description": "The user's username."
+        },
+        "email": {
+          "type": "string",
+          "description": "The user's email address.",
+          "format": "email"
+        },
+        "generationCount": {
+          "type": "number",
+          "description": "The number of images the user has generated."
+        },
+        "isSubscribed": {
+          "type": "boolean",
+          "description": "Whether the user has an active subscription."
+        }
+      },
+      "required": [
+        "id",
+        "email",
+        "generationCount",
+        "isSubscribed"
+      ]
+    },
+    "GeneratedImage": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "GeneratedImage",
+      "type": "object",
+      "description": "Represents a generated image and its associated details.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the generated image. (Primary Key)"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Reference to the User who generated the image. (Relationship: User 1:N GeneratedImage)"
+        },
+        "prompt": {
+          "type": "string",
+          "description": "The text prompt used to generate the image."
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "URL of the generated image.",
+          "format": "uri"
+        },
+        "pdfUrl": {
+          "type": "string",
+          "description": "URL of the generated PDF file.",
+          "format": "uri"
+        },
+        "generationDate": {
+          "type": "string",
+          "description": "The date and time when the image was generated.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "prompt",
+        "imageUrl",
+        "pdfUrl",
+        "generationDate"
+      ]
+    }
+  },
+  "auth": {
+    "providers": [
+      "password",
+      "anonymous",
+      "google.com"
+    ]
+  },
+  "firestore": {
+    "structure": [
+      {
+        "path": "/users/{userId}",
+        "definition": {
+          "entityName": "User",
+          "schema": {
+            "$ref": "#/backend/entities/User"
+          },
+          "description": "Stores user profiles. The 'userId' is the Firebase Auth UID. This path enforces path-based ownership.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The Firebase Auth UID of the user."
+            }
+          ]
+        }
+      },
+      {
+        "path": "/users/{userId}/generatedImages/{imageId}",
+        "definition": {
+          "entityName": "GeneratedImage",
+          "schema": {
+            "$ref": "#/backend/entities/GeneratedImage"
+          },
+          "description": "Stores generated images for a specific user. The 'userId' is denormalized from the parent document (users/{userId}).  This path enforces path-based ownership.",
+          "params": [
+            {
+              "name": "userId",
+              "description": "The Firebase Auth UID of the user."
+            },
+            {
+              "name": "imageId",
+              "description": "Unique identifier for the generated image."
+            }
+          ]
+        }
+      }
+    ],
+    "reasoning": "The Firestore structure is designed to store user data and generated images securely and scalably, following the principles of Authorization Independence, Structural Segregation, and Access Modeling. User data is stored under `/users/{userId}`. Generated images are stored in a subcollection `/users/{userId}/generatedImages/{imageId}` to ensure clear ownership and simplify security rules. This approach eliminates the need for complex `get()` calls in security rules, allowing for atomic operations. It supports secure `list` operations by ensuring that only the owner can access their generated images.\n\nThe structure enforces invariants by making the `userId` a part of the document path, ensuring that each generated image is always tied to a specific user and avoids orphaned documents. Timestamps, when added, can be managed to ensure consistency. The structure promotes data clarity and predictability through explicit path-based ownership and dedicated fields like `imageUrl` and `pdfUrl`."
+  }
+}

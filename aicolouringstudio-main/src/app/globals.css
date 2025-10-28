@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 257 60% 5%; /* Midnight Purple */
+    --foreground: 220 40% 90%; /* Near white with a blue tint */
+    
+    --card: 257 50% 10%;
+    --card-foreground: 220 40% 90%;
+    
+    --popover: 257 60% 5%;
+    --popover-foreground: 220 40% 90%;
+    
+    --primary: 271 100% 70%; /* Vibrant Violet */
+    --primary-foreground: 0 0% 98%;
+    
+    --secondary: 243 27% 28%;
+    --secondary-foreground: 0 0% 98%;
+    
+    --muted: 243 27% 20%;
+    --muted-foreground: 240 5% 64.9%;
+    
+    --accent: 187 100% 50%; /* Cyan Glow */
+    --accent-foreground: 257 60% 5%;
+    
+    --destructive: 0 63% 40%;
+    --destructive-foreground: 0 0% 98%;
+    
+    --border: 257 40% 25%;
+    --input: 257 40% 12%;
+    --ring: 187 100% 60%; /* Brighter Cyan for focus */
+
+    --radius: 0.75rem;
+
+    --chart-1: hsl(var(--primary));
+    --chart-2: hsl(var(--accent));
+
+    /* Pro Theme Colors */
+    --pro-accent: 45 100% 50%; /* Gold */
+    --pro-accent-glow: 45 100% 60%;
+  }
+
+  .dark {
+    --background: 257 60% 5%;
+    --foreground: 220 40% 90%;
+    
+    --card: 257 50% 10%;
+    --card-foreground: 220 40% 90%;
+    
+    --popover: 257 60% 5%;
+    --popover-foreground: 220 40% 90%;
+    
+    --primary: 271 100% 70%;
+    --primary-foreground: 0 0% 98%;
+    
+    --secondary: 243 27% 28%;
+    --secondary-foreground: 0 0% 98%;
+    
+    --muted: 243 27% 20%;
+    --muted-foreground: 240 5% 64.9%;
+    
+    --accent: 187 100% 50%;
+    --accent-foreground: 257 60% 5%;
+    
+    --destructive: 0 63% 40%;
+    --destructive-foreground: 0 0% 98%;
+    
+    --border: 257 40% 25%;
+    --input: 257 40% 12%;
+    --ring: 187 100% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-black/30 backdrop-blur-xl border border-white/10 shadow-2xl shadow-black/50;
+  }
+  
+  .gradient-text {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-violet-400 via-cyan-300 to-pink-400;
+  }
+
+  .pro-gradient-text {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-[hsl(var(--pro-accent-glow))] via-white to-[hsl(var(--pro-accent))];
+  }
+}
+
+@keyframes typing {
+  from { width: 0 }
+  to { width: 100% }
+}
+@keyframes blink-caret {
+  from, to { border-color: transparent }
+  50% { border-color: hsl(var(--accent)); }
+}
+
+.typewriter h1 {
+  overflow: hidden; 
+  border-right: .15em solid hsl(var(--accent));
+  white-space: nowrap;
+  margin: 0 auto;
+  animation: 
+    typing 3.5s steps(40, end),
+    blink-caret .75s step-end infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 15px hsl(var(--ring) / 0.5), 0 0 5px hsl(var(--primary) / 0.5);
+  }
+  50% {
+    box-shadow: 0 0 25px hsl(var(--ring) / 0.8), 0 0 10px hsl(var(--primary) / 0.8);
+  }
+}
+
+@keyframes pulse-glow-pro {
+  0%, 100% {
+    box-shadow: 0 0 15px hsl(var(--pro-accent-glow) / 0.7), 0 0 5px hsl(var(--pro-accent) / 0.7);
+  }
+  50% {
+    box-shadow: 0 0 25px hsl(var(--pro-accent-glow) / 1), 0 0 10px hsl(var(--pro-accent) / 1);
+  }
+}
